@@ -93,26 +93,11 @@ class RAGFlowClient:
         page_size: int = 30,
         highlight: bool = True,
         keyword: bool = False,
-        use_kg: bool = False
+        use_kg: bool = False,
+        rerank_id: Optional[str] = None
     ) -> dict:
         """
         Получение семантически близких чанков по запросу.
-        
-        Args:
-            question: Поисковый запрос
-            dataset_ids: Список ID датасетов для поиска
-            document_ids: Опционально - список ID документов для поиска
-            similarity_threshold: Минимальный порог схожести (0.0 - 1.0)
-            vector_similarity_weight: Вес векторного сходства (0.0 - 1.0)
-            top_k: Количество чанков для векторного поиска
-            page: Номер страницы
-            page_size: Размер страницы
-            highlight: Подсвечивать ли найденные термины
-            keyword: Включить ли поиск по ключевым словам
-            use_kg: Использовать ли Knowledge Graph
-            
-        Returns:
-            dict с результатами поиска
         """
         url = f"{self.base_url}/api/v1/retrieval"
         
@@ -131,6 +116,8 @@ class RAGFlowClient:
         
         if document_ids:
             payload["document_ids"] = document_ids
+        if rerank_id:
+            payload["rerank_id"] = rerank_id
         
         try:
             response = requests.post(
@@ -143,7 +130,52 @@ class RAGFlowClient:
             return response.json()
         except requests.RequestException as e:
             raise RAGFlowError(f"Request failed: {str(e)}")
-    
+
+    def get_mind_map(self, dataset_id: str) -> dict:
+        """
+        Получает данные ментальной карты для датасета.
+        """
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/knowledge_graph"
+        try:
+            response = requests.get(url, headers=self.headers, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("code") != 0:
+                raise RAGFlowError(f"API Error: {data.get('message')}")
+            return data.get("data", {})
+        except requests.RequestException as e:
+            raise RAGFlowError(f"Failed to fetch mind map: {str(e)}")
+
+    def get_ai_summary(self, assistant_id: str, question: str, session_id: Optional[str] = None) -> dict:
+        """
+        Генерирует ИИ-резюме через чат-ассистента.
+        """
+        # 1. Create session if not provided
+        if not session_id:
+            session_url = f"{self.base_url}/api/v1/chats/{assistant_id}/sessions"
+            try:
+                s_resp = requests.post(session_url, headers=self.headers, timeout=self.timeout)
+                s_resp.raise_for_status()
+                s_data = s_resp.json()
+                if s_data.get("code") != 0:
+                    raise RAGFlowError(f"Failed to create session: {s_data.get('message')}")
+                session_id = s_data.get("data", {}).get("id")
+            except requests.RequestException as e:
+                raise RAGFlowError(f"Session creation failed: {str(e)}")
+
+        # 2. Ask question
+        chat_url = f"{self.base_url}/api/v1/chats/{assistant_id}/sessions/{session_id}/completions"
+        payload = {
+            "question": question,
+            "stream": False
+        }
+        try:
+            response = requests.post(chat_url, headers=self.headers, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            raise RAGFlowError(f"Summary request failed: {str(e)}")
+
     def extract_chunks(self, retrieval_response: dict) -> list[Chunk]:
         """
         Извлекает список чанков из ответа API.
@@ -183,16 +215,6 @@ class RAGFlowClient:
     ) -> list[Chunk]:
         """
         Упрощённый метод поиска чанков.
-        
-        Args:
-            question: Поисковый запрос
-            dataset_ids: Список ID датасетов
-            top_k: Количество результатов
-            similarity_threshold: Минимальный порог схожести
-            **kwargs: Дополнительные параметры для retrieve_chunks
-            
-        Returns:
-            Список объектов Chunk
         """
         response = self.retrieve_chunks(
             question=question,

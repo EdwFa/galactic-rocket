@@ -237,6 +237,10 @@ if 'datasets' not in st.session_state:
     st.session_state.datasets = []
 if 'search_results' not in st.session_state:
     st.session_state.search_results = []
+if 'ai_summary' not in st.session_state:
+    st.session_state.ai_summary = ""
+if 'mind_map' not in st.session_state:
+    st.session_state.mind_map = None
 if 'last_query' not in st.session_state:
     st.session_state.last_query = ""
 
@@ -250,134 +254,74 @@ with st.sidebar:
     ragflow_url = st.text_input(
         "🌐 RAGFlow URL",
         value="http://localhost:9380",
-        placeholder="http://localhost:9380",
-        help="URL адрес вашего RAGFlow сервера"
+        placeholder="http://localhost:9380"
     )
     
-    api_key = st.text_input(
-        "🔑 API Key",
-        type="password",
-        placeholder="Введите API ключ",
-        help="API ключ можно получить в настройках RAGFlow"
-    )
+    api_key = st.text_input("🔑 API Key", type="password")
     
-    col1, col2 = st.columns(2)
+    if st.button("🔌 Подключиться", use_container_width=True):
+        if ragflow_url and api_key:
+            try:
+                client = RAGFlowClient(ragflow_url, api_key)
+                datasets = client.list_datasets()
+                st.session_state.client = client
+                st.session_state.connected = True
+                st.session_state.datasets = datasets
+                st.success("✅ Подключено!")
+            except Exception as e:
+                st.error(f"❌ Ошибка: {str(e)}")
     
-    with col1:
-        if st.button("🔌 Подключиться", use_container_width=True):
-            if ragflow_url and api_key:
-                try:
-                    client = RAGFlowClient(ragflow_url, api_key)
-                    # Try to get datasets to verify connection
-                    datasets = client.list_datasets()
-                    st.session_state.client = client
-                    st.session_state.connected = True
-                    st.session_state.datasets = datasets
-                    st.success("✅ Подключено!")
-                except RAGFlowError as e:
-                    st.error(f"❌ Ошибка: {str(e)}")
-                    st.session_state.connected = False
-                except Exception as e:
-                    st.error(f"❌ Ошибка подключения: {str(e)}")
-                    st.session_state.connected = False
-            else:
-                st.warning("⚠️ Заполните URL и API Key")
-    
-    with col2:
-        if st.button("🔄 Обновить", use_container_width=True, disabled=not st.session_state.connected):
-            if st.session_state.client:
-                try:
-                    st.session_state.datasets = st.session_state.client.list_datasets()
-                    st.success("✅ Обновлено!")
-                except RAGFlowError as e:
-                    st.error(f"❌ {str(e)}")
-    
-    # Connection status
-    st.markdown("---")
+    # Advanced Settings
     if st.session_state.connected:
-        st.markdown("**Статус:** <span class='status-connected'>● Подключено</span>", unsafe_allow_html=True)
-        st.markdown(f"**Датасетов:** {len(st.session_state.datasets)}")
-    else:
-        st.markdown("**Статус:** <span class='status-disconnected'>● Отключено</span>", unsafe_allow_html=True)
-    
-    # Dataset selection
-    if st.session_state.connected and st.session_state.datasets:
+        st.markdown("---")
+        st.markdown("## 🚀 Продвинутые функции")
+        
+        use_rerank = st.checkbox("🔄 Включить Rerank", value=False)
+        rerank_id = st.text_input("🆔 Rerank Model ID", help="ID модели переранжирования из вашего профиля") if use_rerank else None
+        
+        use_summary = st.checkbox("🤖 ИИ-резюме", value=False)
+        assistant_id = st.text_input("🤖 Assistant ID", help="ID ассистента для генерации резюме") if use_summary else None
+        
+        use_kg_search = st.checkbox("🕸️ Связный поиск (KG)", value=False, help="Использовать Knowledge Graph")
+        show_mind_map = st.checkbox("🗺️ Показать Mind Map", value=False)
+
         st.markdown("---")
         st.markdown("## 📚 Выбор датасетов")
-        
         dataset_options = {d.get('name', d.get('id')): d.get('id') for d in st.session_state.datasets}
-        
-        selected_datasets = st.multiselect(
-            "Датасеты для поиска",
-            options=list(dataset_options.keys()),
-            default=list(dataset_options.keys())[:1] if dataset_options else [],
-            help="Выберите один или несколько датасетов"
-        )
-        
+        selected_datasets = st.multiselect("Датасеты", options=list(dataset_options.keys()), default=list(dataset_options.keys())[:1] if dataset_options else [])
         st.session_state.selected_dataset_ids = [dataset_options[name] for name in selected_datasets]
-    
+
     # Search parameters
     st.markdown("---")
     st.markdown("## 🎛️ Параметры поиска")
-    
-    top_k = st.slider(
-        "📊 Количество результатов",
-        min_value=1,
-        max_value=50,
-        value=5,
-        help="Максимальное количество возвращаемых чанков"
-    )
-    
-    similarity_threshold = st.slider(
-        "🎯 Порог схожести",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.2,
-        step=0.05,
-        help="Минимальный уровень схожести для включения в результаты"
-    )
-    
-    vector_weight = st.slider(
-        "⚖️ Вес векторного сходства",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.3,
-        step=0.1,
-        help="Баланс между векторным и терминологическим сходством"
-    )
-    
-    use_highlight = st.checkbox("✨ Подсветка терминов", value=True)
-    use_keyword = st.checkbox("🔤 Поиск по ключевым словам", value=False)
+    top_k = st.slider("📊 Top K", 1, 50, 5)
+    similarity_threshold = st.slider("🎯 Порог", 0.0, 1.0, 0.2, 0.05)
+    vector_weight = st.slider("⚖️ Вес вектора", 0.0, 1.0, 0.3, 0.1)
+    use_highlight = st.checkbox("✨ Подсветка", value=True)
+    use_keyword = st.checkbox("🔤 Ключевые слова", value=False)
 
 
 # ============================================================================
 # Main Content
 # ============================================================================
-st.markdown("<h1 class='main-header'>🔍 RAGFlow Semantic Search</h1>", unsafe_allow_html=True)
-st.markdown("<p class='sub-header'>Поиск семантически близких чанков в вашей базе знаний</p>", unsafe_allow_html=True)
+st.markdown("<h1 class='main-header'>🔍 RAGFlow Advanced Search</h1>", unsafe_allow_html=True)
 
 # Search input
 col1, col2 = st.columns([5, 1])
-
 with col1:
-    query = st.text_input(
-        "Поисковый запрос",
-        placeholder="Введите ваш вопрос или ключевые слова...",
-        label_visibility="collapsed"
-    )
-
+    query = st.text_input("Запрос", label_visibility="collapsed")
 with col2:
     search_clicked = st.button("🔎 Искать", use_container_width=True, type="primary")
 
-# Perform search
 if search_clicked and query:
     if not st.session_state.connected:
-        st.error("❌ Сначала подключитесь к RAGFlow")
-    elif not hasattr(st.session_state, 'selected_dataset_ids') or not st.session_state.selected_dataset_ids:
-        st.error("❌ Выберите хотя бы один датасет")
+        st.error("❌ Подключитесь в боковой панели")
+    elif not st.session_state.selected_dataset_ids:
+        st.error("❌ Выберите датасет")
     else:
-        with st.spinner("🔄 Выполняется поиск..."):
+        with st.spinner("🔄 Получение данных..."):
             try:
+                # 1. Retrieval
                 chunks = st.session_state.client.search(
                     question=query,
                     dataset_ids=st.session_state.selected_dataset_ids,
@@ -385,34 +329,58 @@ if search_clicked and query:
                     similarity_threshold=similarity_threshold,
                     vector_similarity_weight=vector_weight,
                     highlight=use_highlight,
-                    keyword=use_keyword
+                    keyword=use_keyword,
+                    use_kg=use_kg_search,
+                    rerank_id=rerank_id
                 )
                 st.session_state.search_results = chunks
                 st.session_state.last_query = query
-            except RAGFlowError as e:
-                st.error(f"❌ Ошибка поиска: {str(e)}")
+                
+                # 2. AI Summary
+                if use_summary and assistant_id:
+                    summary_resp = st.session_state.client.get_ai_summary(assistant_id, query)
+                    st.session_state.ai_summary = summary_resp.get("data", {}).get("answer", "")
+                else:
+                    st.session_state.ai_summary = ""
+                
+                # 3. Mind Map
+                if show_mind_map:
+                    # Get for the first dataset
+                    kg_data = st.session_state.client.get_mind_map(st.session_state.selected_dataset_ids[0])
+                    st.session_state.mind_map = kg_data.get("mind_map")
+                else:
+                    st.session_state.mind_map = None
+                    
             except Exception as e:
-                st.error(f"❌ Неожиданная ошибка: {str(e)}")
+                st.error(f"❌ Ошибка: {str(e)}")
 
-# Display results
+# Display Results
 if st.session_state.search_results:
-    chunks = st.session_state.search_results
+    # 1. AI Summary Section
+    if st.session_state.ai_summary:
+        st.markdown("### 🤖 ИИ-резюме")
+        st.info(st.session_state.ai_summary)
     
-    # Statistics
+    # 2. Mind Map Section
+    if st.session_state.mind_map:
+        st.markdown("### 🗺️ Mind Map")
+        with st.expander("Показать структуру ментальной карты"):
+            st.json(st.session_state.mind_map)
+
+    # 3. Stats
     st.markdown("---")
-    
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown(f"""
         <div class="stat-card">
-            <div class="stat-value">{len(chunks)}</div>
+            <div class="stat-value">{len(st.session_state.search_results)}</div>
             <div class="stat-label">Найдено чанков</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
-        avg_sim = sum(c.similarity for c in chunks) / len(chunks) if chunks else 0
+        avg_sim = sum(c.similarity for c in st.session_state.search_results) / len(st.session_state.search_results) if st.session_state.search_results else 0
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{avg_sim:.1%}</div>
@@ -421,7 +389,7 @@ if st.session_state.search_results:
         """, unsafe_allow_html=True)
     
     with col3:
-        max_sim = max(c.similarity for c in chunks) if chunks else 0
+        max_sim = max(c.similarity for c in st.session_state.search_results) if st.session_state.search_results else 0
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{max_sim:.1%}</div>
@@ -430,30 +398,18 @@ if st.session_state.search_results:
         """, unsafe_allow_html=True)
     
     with col4:
-        unique_docs = len(set(c.document_name for c in chunks))
+        unique_docs = len(set(c.document_name for c in st.session_state.search_results))
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{unique_docs}</div>
             <div class="stat-label">Документов</div>
         </div>
         """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    st.markdown(f"### 📄 Результаты для: *\"{st.session_state.last_query}\"*")
-    
-    # Chunks display
-    for i, chunk in enumerate(chunks, 1):
-        # Determine similarity badge class
-        if chunk.similarity >= 0.7:
-            badge_class = ""
-        elif chunk.similarity >= 0.4:
-            badge_class = "medium"
-        else:
-            badge_class = "low"
-        
-        # Display content (use highlight if available)
+
+    # 4. Chunks
+    for i, chunk in enumerate(st.session_state.search_results, 1):
+        badge_class = "" if chunk.similarity >= 0.7 else "medium" if chunk.similarity >= 0.4 else "low"
         display_content = chunk.highlight if chunk.highlight and use_highlight else chunk.content
-        
         st.markdown(f"""
         <div class="chunk-card">
             <div class="chunk-header">
@@ -461,11 +417,6 @@ if st.session_state.search_results:
                 <span class="similarity-badge {badge_class}">{chunk.similarity:.1%}</span>
             </div>
             <div class="chunk-content">{display_content}</div>
-            <div class="chunk-meta">
-                <span class="meta-item">🎯 Vector: {chunk.vector_similarity:.1%}</span>
-                <span class="meta-item">📝 Term: {chunk.term_similarity:.1%}</span>
-                <span class="meta-item">🔖 ID: {chunk.chunk_id[:8]}...</span>
-            </div>
         </div>
         """, unsafe_allow_html=True)
         
